@@ -22,13 +22,15 @@ selected_city = st.sidebar.selectbox('Selecione a cidade', df['city'].unique(), 
 selected_scorer = st.sidebar.selectbox('Selecione o artilheiro', df2['scorer'].unique(), key='scorer_selectbox')
 num_countries = st.sidebar.slider('Quantidade de Países', min_value=1, max_value=50, value=10, key='countries_slider')
 
+# Filtra os jogos em que o país é o time da casa ou o time visitante e ganhou o jogo
 country_wins = df[((df['home_team'] == country) & (df['home_score'] > df['away_score'])) |
                   ((df['away_team'] == country) & (df['away_score'] > df['home_score']))]
 
-competitions = df[df['home_team'] == country]['tournament'].unique()
+competitions = df[(df['home_team'] == country) | (df['away_team'] == country)]['tournament'].unique()
 selected_competition = st.sidebar.selectbox('Selecione a competição', competitions, key='competition_selectbox')
 
-df_competition = df[df['tournament'] == selected_competition]
+df_competition = df[(df['tournament'] == selected_competition) & 
+                    ((df['home_team'] == country) | (df['away_team'] == country))]
 
 merged_df = pd.merge(country_wins, df2, left_on=['date', 'home_team', 'away_team'], right_on=['date', 'home_team', 'away_team'])
 
@@ -46,7 +48,7 @@ final_table.columns = ['Data', 'Time da Casa', 'Time Visitante', 'Local do Confr
 st.header('Jogos e Artilheiros')
 st.dataframe(final_table)
 
-# Conta o número de vitórias por cidade ----- ----------
+# Conta o número de vitórias por cidade
 win_counts = country_wins['city'].value_counts().reset_index()
 win_counts.columns = ['city', 'win_count']
 
@@ -62,7 +64,7 @@ fig = px.bar(final_win_data, x='city', y='win_count', text='top_scorer', title='
 fig.update_traces(textposition='outside')
 st.plotly_chart(fig)
 
-# Os maiores artilheiros por país --------------------
+# Os maiores artilheiros por país
 top_scorers_by_country = merged_df.groupby(['home_team', 'scorer']).size().reset_index(name='goals')
 top_scorers_by_country = top_scorers_by_country.sort_values(['home_team', 'goals'], ascending=[True, False])
 top_scorers_by_country = top_scorers_by_country.groupby('home_team').head(1).reset_index(drop=True)
@@ -76,7 +78,7 @@ fig_top_scorers = px.bar(top_scorers_by_country.head(num_countries), x='País', 
 fig_top_scorers.update_traces(textposition='outside')
 st.plotly_chart(fig_top_scorers)
 
-# Média dos minutos dos gols para cada equipe  -------------------
+# Média dos minutos dos gols para cada equipe 
 average_goal_time = df2.groupby('team')['minute'].mean().reset_index()
 
 top_average_goal_time = average_goal_time.nsmallest(num_countries, 'minute')
@@ -92,12 +94,14 @@ fig3 = px.bar(top_average_goal_time, x='Equipe', y='Média de Minutos', title=f'
 fig3.update_traces(textposition='outside')
 st.plotly_chart(fig3)
 
-# Vitórias por Ano ------------------
+# Vitórias por Ano
 st.header('Vitórias por Ano')
-wins_per_year = df[df['home_team'] == country].groupby(df['date'].str[:4])['home_team'].count().reset_index()
+wins_per_year = df[((df['home_team'] == country) & (df['home_score'] > df['away_score'])) |
+                   ((df['away_team'] == country) & (df['away_score'] > df['home_score']))].groupby(df['date'].str[:4]).size().reset_index(name='Vitórias')
 wins_per_year.columns = ['Ano', 'Vitórias']
 fig4 = px.line(wins_per_year, x='Ano', y='Vitórias', title='Vitórias por Ano')
 st.plotly_chart(fig4)
+
 
 # Artilheiros por Ano --------------------
 st.header('Artilheiros por Ano')
@@ -119,13 +123,15 @@ goals_per_competition['total_goals'] = goals_per_competition['home_score'] + goa
 fig6 = px.bar(goals_per_competition.head(num_countries), x='tournament', y='total_goals', title='Gols por Competição')
 st.plotly_chart(fig6)
 
-# Porcentagem de Vitórias, Empates e Derrotas por Competição ---------------
+# Porcentagem de Vitórias, Empates e Derrotas por Competição
 st.header('Porcentagem de Vitórias, Empates e Derrotas por Competição')
-results_by_competition = df[df['home_team'] == country].groupby('tournament').apply(
+results_by_competition = df[((df['home_team'] == country) | (df['away_team'] == country))].groupby('tournament').apply(
     lambda x: pd.Series({
-        'Vitórias': (x['home_score'] > x['away_score']).sum() + (x['away_score'] > x['home_score']).sum(),
+        'Vitórias': ((x['home_team'] == country) & (x['home_score'] > x['away_score'])).sum() +
+                    ((x['away_team'] == country) & (x['away_score'] > x['home_score'])).sum(),
         'Empates': (x['home_score'] == x['away_score']).sum(),
-        'Derrotas': (x['home_score'] < x['away_score']).sum() + (x['away_score'] < x['home_score']).sum()
+        'Derrotas': ((x['home_team'] == country) & (x['home_score'] < x['away_score'])).sum() +
+                    ((x['away_team'] == country) & (x['away_score'] < x['home_score'])).sum()
     })
 ).reset_index()
 
@@ -136,12 +142,40 @@ results_by_competition['Derrotas (%)'] = results_by_competition['Derrotas'] / re
 
 results_melted = results_by_competition.melt(id_vars='tournament', value_vars=['Vitórias', 'Empates', 'Derrotas'],
                                              var_name='Resultado', value_name='Quantidade')
-results_melted['Porcentagem'] = results_melted.apply(lambda row: results_by_competition.loc[results_by_competition['tournament'] == row['tournament'], f"{row['Resultado']} (%)"].values[0], axis=1)
+results_melted['Porcentagem'] = results_melted.apply(
+    lambda row: results_by_competition.loc[results_by_competition['tournament'] == row['tournament'], f"{row['Resultado']} (%)"].values[0],
+    axis=1
+)
 
 fig7 = px.pie(results_melted, names='Resultado', values='Quantidade', title='Porcentagem de Vitórias, Empates e Derrotas por Competição',
               hover_data=['Porcentagem'], labels={'Quantidade': 'Quantidade', 'Porcentagem': 'Porcentagem (%)'})
 fig7.update_traces(textposition='inside', textinfo='label+percent+value')
 st.plotly_chart(fig7)
+
+
+# Tabela com a quantidade de gols, vitórias, empates, derrotas, gols de pênalti e gols contra do país selecionado
+st.header('Estatísticas do País Selecionado')
+total_goals = df2[df2['team'] == country].shape[0]
+total_wins = ((df['home_team'] == country) & (df['home_score'] > df['away_score'])).sum() + ((df['away_team'] == country) & (df['away_score'] > df['home_score'])).sum()
+total_draws = ((df['home_team'] == country) & (df['home_score'] == df['away_score'])).sum() + ((df['away_team'] == country) & (df['home_score'] == df['away_score'])).sum()
+total_losses = ((df['home_team'] == country) & (df['home_score'] < df['away_score'])).sum() + ((df['away_team'] == country) & (df['away_score'] < df['home_score'])).sum()
+total_penalty_goals = df2[(df2['team'] == country) & (df2['penalty'] == 1)].shape[0]
+total_own_goals = df2[(df2['team'] == country) & (df2['own_goal'] == 1)].shape[0]
+total_goals_conceded = df[(df['home_team'] == country)]['away_score'].sum() + df[(df['away_team'] == country)]['home_score'].sum()
+
+stats_data = {
+    'Estatística': ['Gols', 'Vitórias', 'Empates', 'Derrotas', 'Gols de Pênalti', 'Gols Contra', 'Gols Sofridos'],
+    'Quantidade': [total_goals, total_wins, total_draws, total_losses, total_penalty_goals, total_own_goals, total_goals_conceded]
+}
+stats_df = pd.DataFrame(stats_data)
+
+st.dataframe(stats_df)
+
+# Ranking dos jogadores que fizeram mais gols
+st.header('Ranking dos Jogadores que Fizeram Mais Gols')
+top_scorers_overall = df2[df2['team'] == country].groupby('scorer').size().reset_index(name='gols').sort_values(by='gols', ascending=False).head(num_countries)
+top_scorers_overall.columns = ['Jogador', 'Gols']
+st.dataframe(top_scorers_overall)
 
 if st.sidebar.button('Recarregar Dados'):
     st.experimental_rerun()
